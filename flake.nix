@@ -116,6 +116,10 @@
             ];
         };
       in {
+        # Exposed so the asset build can be checked on its own, without
+        # waiting out the Rust compile behind it.
+        packages.web-assets = web-assets;
+
         packages.default = rustPlatform.buildRustPackage {
           pname = "moltis";
           version = "0.1.0";
