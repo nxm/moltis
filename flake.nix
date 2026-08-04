@@ -82,6 +82,10 @@
             # treats the other's missing libc as a hard error.
             find node_modules -type d -name '*-musl' -prune -exec rm -rf {} +
             autoPatchelf node_modules
+
+            # unpackPhase only makes sourceRoot writable, and every script here
+            # writes one level up, into ../src/assets.
+            chmod -R u+w ..
           '';
 
           # Every script writes into ../src/assets — outside this package, and
