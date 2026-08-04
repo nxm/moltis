@@ -51,6 +51,54 @@
             || (builtins.match ".*/wit.*" path != null);
         };
 
+        # Generated web assets: Vite bundle, Tailwind CSS, service worker.
+        #
+        # These are gitignored, so a clean checkout has none of them, and
+        # `embedded-assets` makes crates/web/build.rs exit 1 when they are
+        # missing. Without this derivation `packages.default` cannot build
+        # outside a working tree where `just build-web-assets` has been run.
+        web-assets = pkgs.buildNpmPackage {
+          pname = "moltis-web-assets";
+          version = "0.1.0";
+          inherit src;
+          sourceRoot = "source/crates/web/ui";
+          npmDepsHash = "sha256-DnQSBNBhYIAMpgw9sBGjwRVBqjWwtZ7V39nklvr/oqY=";
+
+          # Playwright's postinstall downloads a browser: impossible in the
+          # sandbox and irrelevant to the assets.
+          npmFlags = ["--ignore-scripts"];
+
+          nativeBuildInputs = [pkgs.autoPatchelfHook];
+          buildInputs = [pkgs.stdenv.cc.cc.lib];
+
+          # Rollup and Tailwind's oxide ship prebuilt .node libraries linked
+          # against a glibc that is not at the usual path here. They must be
+          # patched before the build runs, not in fixupPhase, so the hook is
+          # invoked by hand.
+          dontAutoPatchelf = true;
+          preBuild = ''
+            autoPatchelf node_modules
+          '';
+
+          # Every script writes into ../src/assets — outside this package, and
+          # exactly where include_dir! reads at compile time. Order matters:
+          # build-sw.mjs hashes the asset tree, so it has to run last.
+          buildPhase = ''
+            runHook preBuild
+            npm run build
+            npm run build:css
+            npm run build:shiki
+            npm run build:sw
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            cp -r ../src/assets "$out"
+            runHook postInstall
+          '';
+        };
+
         moltis-wasm-tools = wasmCraneLib.buildPackage {
           inherit src;
           pname = "moltis-wasm-tools";
@@ -81,11 +129,21 @@
           preBuild = ''
             mkdir -p target/wasm32-wasip2/release/
             ln -s ${moltis-wasm-tools}/lib/* target/wasm32-wasip2/release/
+
+            # The checkout carries only the hand-written assets; the derivation
+            # above holds those plus the generated ones, so it replaces the
+            # directory outright rather than being copied inside it.
+            rm -rf crates/web/src/assets
+            cp -r ${web-assets} crates/web/src/assets
+            chmod -R u+w crates/web/src/assets
           '';
           cargoLock = {
             lockFile = ./Cargo.lock;
             outputHashes = {
               "sqlx-core-0.8.6" = "sha256-iZZlJ8YGlM1YUEGitK4aZH68tmg3y+gAVysXS8B+DW8=";
+              # whatsapp-rust: the lock has a second git source, unpinned here,
+              # so cargoLock rejected the whole file.
+              "wacore-0.6.0" = "sha256-gjb3Lt0hMF5unxT8xTYX282wxi4aik7Vx0blxYzGF4w=";
             };
           };
           nativeBuildInputs = with pkgs; [
