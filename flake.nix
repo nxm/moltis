@@ -77,6 +77,10 @@
           # invoked by hand.
           dontAutoPatchelf = true;
           preBuild = ''
+            # npm brings down both the glibc and the musl build of every native
+            # module. Only one of them can ever load here, and autoPatchelf
+            # treats the other's missing libc as a hard error.
+            find node_modules -type d -name '*-musl' -prune -exec rm -rf {} +
             autoPatchelf node_modules
           '';
 
