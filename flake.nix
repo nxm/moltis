@@ -43,6 +43,8 @@
           rustc = rustToolchain;
         };
 
+        craneLib = (crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
+
         # Create a clean source that includes necessary files and the wit directory
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
@@ -123,57 +125,56 @@
               pkgs.libiconv
             ];
         };
-      in {
-        # Exposed so the asset build can be checked on its own, without
-        # waiting out the Rust compile behind it.
-        packages.web-assets = web-assets;
-
-        packages.default = rustPlatform.buildRustPackage {
+        # Everything the build needs that does not depend on moltis's own code.
+        # Split out so that editing a crate here recompiles that crate and its
+        # dependents, instead of the entire graph: the third-party half of this
+        # tree is some five hundred crates, and rebuilding tree-sitter and
+        # matrix-sdk to change one line in a channel handler is most of the wait.
+        commonArgs = {
           pname = "moltis";
           version = "0.1.0";
           inherit src;
           doCheck = false;
-
-          buildFeatures = [
-            "embedded-assets"
-            "embedded-wasm"
-          ];
-          preBuild = ''
-            mkdir -p target/wasm32-wasip2/release/
-            ln -s ${moltis-wasm-tools}/lib/* target/wasm32-wasip2/release/
-
-            # The checkout carries only the hand-written assets; the derivation
-            # above holds those plus the generated ones, so it replaces the
-            # directory outright rather than being copied inside it.
-            rm -rf crates/web/src/assets
-            cp -r ${web-assets} crates/web/src/assets
-            chmod -R u+w crates/web/src/assets
-          '';
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-            outputHashes = {
-              "sqlx-core-0.8.6" = "sha256-iZZlJ8YGlM1YUEGitK4aZH68tmg3y+gAVysXS8B+DW8=";
-              # whatsapp-rust: the lock has a second git source, unpinned here,
-              # so cargoLock rejected the whole file.
-              "wacore-0.6.0" = "sha256-gjb3Lt0hMF5unxT8xTYX282wxi4aik7Vx0blxYzGF4w=";
-            };
-          };
           nativeBuildInputs = with pkgs; [
             rustPlatform.bindgenHook
             cmake
             perl
             pkg-config
           ];
-          cargoBuildFlags = ["--bin" "moltis"];
-          MOLTIS_VERSION = toString (self.shortRev or self.dirtyShortRev or self.lastModified or "nix");
-
-          meta = with pkgs.lib; {
-            description = "Personal AI gateway inspired by OpenClaw";
-            homepage = "https://www.moltis.org/";
-            license = licenses.mit;
-            mainProgram = "moltis";
-          };
         };
+
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+      in {
+        # Exposed so the asset build can be checked on its own, without
+        # waiting out the Rust compile behind it.
+        packages.web-assets = web-assets;
+        packages.deps = cargoArtifacts;
+
+        packages.default = craneLib.buildPackage (commonArgs
+          // {
+            inherit cargoArtifacts;
+
+            cargoExtraArgs = "--bin moltis --features embedded-assets,embedded-wasm";
+            preBuild = ''
+              mkdir -p target/wasm32-wasip2/release/
+              ln -s ${moltis-wasm-tools}/lib/* target/wasm32-wasip2/release/
+
+              # The checkout carries only the hand-written assets; the derivation
+              # above holds those plus the generated ones, so it replaces the
+              # directory outright rather than being copied inside it.
+              rm -rf crates/web/src/assets
+              cp -r ${web-assets} crates/web/src/assets
+              chmod -R u+w crates/web/src/assets
+            '';
+            MOLTIS_VERSION = toString (self.shortRev or self.dirtyShortRev or self.lastModified or "nix");
+
+            meta = with pkgs.lib; {
+              description = "Personal AI gateway inspired by OpenClaw";
+              homepage = "https://www.moltis.org/";
+              license = licenses.mit;
+              mainProgram = "moltis";
+            };
+          });
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
