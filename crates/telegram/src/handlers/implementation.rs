@@ -304,13 +304,44 @@ pub async fn handle_message_direct(
                     },
                 };
 
+                // Photos were shown to the model and then thrown away, unlike
+                // documents. Tools that want to keep the image — filing a meal
+                // photo into a notebook, say — had nothing to reach for, and
+                // asking the user to attach every photo as a document to work
+                // around that is a papercut on the most common way to send one.
+                //
+                // Telegram has already compressed the photo to JPEG, so what is
+                // stored is the optimised data rather than the download: same
+                // pixels the model saw, a fraction of the bytes.
+                //
+                // Uniqueness comes from the file-id prefix that the save helper
+                // prepends, so the display name only has to say what this is.
+                let display_name = if media_type.ends_with("png") {
+                    "photo.png"
+                } else {
+                    "photo.jpg"
+                };
+                let reply_target = reply_target_for_msg(account_id, &msg);
+                let saved_photo = save_inbound_document(
+                    event_sink.as_ref(),
+                    &reply_target,
+                    Some(display_name),
+                    &media_type,
+                    &photo_file.file_id,
+                    &final_data,
+                )
+                .await;
+                let photo_files = saved_photo.as_ref().map(|saved| {
+                    vec![channel_document_file(saved, Some(display_name), &media_type)]
+                });
+
                 let attachment = ChannelAttachment {
                     media_type,
                     data: final_data,
                 };
                 // Use caption as text, or empty string if no caption
                 let caption = text.clone().unwrap_or_default();
-                (caption, vec![attachment], None, None)
+                (caption, vec![attachment], None, photo_files)
             },
             Err(e) => {
                 warn!(account_id, error = %e, "failed to download photo");
